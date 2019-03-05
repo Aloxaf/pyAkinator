@@ -1,4 +1,3 @@
 # pyAkinator
 
-# 依赖
-py-getch
+Akinator 的命令行版本
