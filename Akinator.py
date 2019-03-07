@@ -11,21 +11,22 @@ CharacterInfo = namedtuple('CharacterInfo', 'times_selected previous')
 
 
 class Game:
-    api: str = 'https://srv11.akinator.com:9150/ws'
-    ses: Session
+    _api: str = 'https://srv11.akinator.com:9150/ws'
+    _ses: Session
     # game
-    session: str
-    signature: str
-    step_info: StepInfo
+    _session: str
+    _signature: str
+    _step_info: StepInfo
+
+    proxies: Dict = {
+        'https': 'socks5h://127.0.0.1:8877'
+    }
 
     def __init__(self) -> None:
-        self.ses = Session()
+        self._ses = Session()
         # the proxies setting doesn't seem to work 
-        self.ses.proxies = {
-            'http': 'socks5h://127.0.0.1:8877',
-            'https': 'socks5h://127.0.0.1:8877',
-        }
-        self.ses.headers = {
+        self._ses.proxies = self.proxies
+        self._ses.headers = {
             'DNT': '1',
             'Accept-Encoding': 'gzip, deflate, br',
             'Accept-Language': 'zh-CN,zh;q=0.9',
@@ -35,12 +36,12 @@ class Game:
             'Connection': 'keep-alive',
         }
         json = self.new_session()
-        self.session = json['parameters']['identification']['session']
-        self.signature = json['parameters']['identification']['signature']
+        self._session = json['parameters']['identification']['session']
+        self._signature = json['parameters']['identification']['signature']
         self.update_step_info(json['parameters']['step_information'])
 
     def update_step_info(self, info: Dict) -> None:
-        self.step_info = StepInfo(
+        self._step_info = StepInfo(
             question=info['question'],
             answers=[i['answer'] for i in info['answers']],
             step=info['step'],
@@ -50,9 +51,13 @@ class Game:
     def get(self, url: str, params: Dict = None) -> Response:
         if params:
             params.update({'_': str(round(time() * 1000))})
-        return self.ses.get(url, params=params, proxies={
-            'https': 'socks5h://127.0.0.1:8877'
-        })
+            if hasattr(self, 'session'):
+                params.update({
+                    'session': self._session,
+                    'signature': self._signature,
+                    'step': self._step_info.step,
+                })
+        return self._ses.get(url, params=params, proxies=self.proxies)
 
     def new_session(self) -> Dict:
         """开始新游戏"""
@@ -66,50 +71,41 @@ class Game:
             'soft_constraint': '',
             'question_filter': '',
         }
-        return self.get(f'{self.api}/new_session', params=params).json()
+        return self.get(f'{self._api}/new_session', params=params).json()
 
     def send_answer(self, ans_id: Param) -> None:
         """发送答案序号"""
         params = {
-            'session': self.session,
-            'signature': self.signature,
-            'step': self.step_info.step,
             'answer': ans_id,
             'question_filter': '',
         }
-        json = self.get(f'{self.api}/answer', params=params).json()
+        json = self.get(f'{self._api}/answer', params=params).json()
         self.update_step_info(json['parameters'])
 
     def get_question(self) -> str:
         """获取当前问题"""
-        return f"{self.step_info.step}. {self.step_info.question}"
+        return f"{self._step_info.step}. {self._step_info.question}"
 
     def get_answers(self) -> List[str]:
         """获取当前答案列表"""
-        return self.step_info.answers
+        return self._step_info.answers
 
     def get_progression(self) -> float:
         """获取当前游戏进度(百分比)"""
-        return float(self.step_info.progression)
+        return float(self._step_info.progression)
 
     def cancel_answer(self) -> None:
         """返回上一题"""
         params = {
-            'session': self.session,
-            'signature': self.signature,
-            'step': self.step_info.step,
             'answer': '-1',
             'question_filter': '',
         }
-        json = self.get(f'{self.api}/cancel_answer', params=params).json()
+        json = self.get(f'{self._api}/cancel_answer', params=params).json()
         self.update_step_info(json['parameters'])
 
     def get_guess(self, size: Param = 2) -> List[Guess]:
         """获取当前猜测列表, size 为列表大小, 一般为 2/20 """
         params = {
-            'session': self.session,
-            'signature': self.signature,
-            'step': self.step_info.step,
             'size': size,
             'max_pic_width': '246',
             'max_pic_height': '294',
@@ -117,7 +113,7 @@ class Game:
             'duel_allowed': '1',
             'mode_question': '0',
         }
-        json = self.get(f'{self.api}/list', params=params).json()
+        json = self.get(f'{self._api}/list', params=params).json()
         return [
             Guess(
                 id=guess['element']['id'],
@@ -130,30 +126,24 @@ class Game:
     def send_result(self, element: Param) -> CharacterInfo:
         """发送猜测结果"""
         params = {
-            'session': self.session,
-            'signature': self.signature,
-            'step': self.step_info.step,
             'element': element,
             'duel_allowed': '1',
         }
-        json = self.get(f'{self.api}/choice', params=params).json()
+        json = self.get(f'{self._api}/choice', params=params).json()
         info = json['parameters']['element_informations']
         return CharacterInfo(times_selected=info['times_selected'], previous=info['previous'])
 
     def exclude(self) -> None:
         """排除当前猜测"""
         params = {
-            'session': self.session,
-            'signature': self.signature,
-            'step': self.step_info.step,
             'question_filter': '',
             'forward_answer': '1',
         }
-        json = self.get(f'{self.api}/exclusion', params=params).json()
+        json = self.get(f'{self._api}/exclusion', params=params).json()
         self.update_step_info(json['parameters'])
 
 
-def main():
+def main() -> None:
     game = Game()
 
     print('''在脑海中猜想一个真实或虚构的人物,我将猜出TA是谁
@@ -164,7 +154,7 @@ def main():
     while True:
         while game.get_progression() <= 95:
             print(game.get_question())
-            print('  '.join(f'{i+1}: {j}' for i, j in enumerate(game.get_answers() + ['返回上一步'])))
+            print('  '.join(f'{i + 1}: {j}' for i, j in enumerate(game.get_answers() + ['返回上一步'])))
             choice = int(input())
             if choice == 6:
                 game.cancel_answer()
